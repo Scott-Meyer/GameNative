@@ -2,6 +2,7 @@ package com.winlator.xserver.extensions;
 
 import static com.winlator.xserver.XClientRequestHandler.RESPONSE_CODE_SUCCESS;
 
+import com.winlator.xserver.Atom;
 import com.winlator.xserver.Bitmask;
 import com.winlator.xserver.Window;
 import com.winlator.xserver.XClient;
@@ -48,11 +49,22 @@ public class XInput2Extension implements Extension {
 
     private static abstract class ClientOpcodes {
         private static final byte GET_EXTENSION_VERSION = 1;  // X_GetExtensionVersion (XI 1.x)
+        private static final byte LIST_INPUT_DEVICES    = 2;  // X_ListInputDevices (XI 1.x)
         private static final byte GET_CLIENT_POINTER    = 45; // X_XIGetClientPointer (XI 2.x)
         private static final byte SELECT_EVENTS         = 46; // X_XISelectEvents (XI 2.x)
         private static final byte QUERY_VERSION         = 47; // X_XIQueryVersion (XI 2.x)
         private static final byte QUERY_DEVICE          = 48; // X_XIQueryDevice (XI 2.x)
     }
+
+    private static abstract class LegacyDeviceUse {
+        private static final int X_POINTER = 0;
+        private static final int X_KEYBOARD = 1;
+    }
+
+    private static final int LEGACY_MOUSE_TYPE = Atom.internAtom("MOUSE");
+    private static final int LEGACY_KEYBOARD_TYPE = Atom.internAtom("KEYBOARD");
+    private static final byte[] LEGACY_POINTER_NAME = "Virtual Core Pointer".getBytes(XServer.LATIN1_CHARSET);
+    private static final byte[] LEGACY_KEYBOARD_NAME = "Virtual Core Keyboard".getBytes(XServer.LATIN1_CHARSET);
 
     private static class Selection {
         Window window;
@@ -132,6 +144,59 @@ public class XInput2Extension implements Extension {
             outputStream.writeShort((short) 0);
             outputStream.writeByte((byte) 1);
             outputStream.writePad(19);
+        }
+    }
+
+    private static int legacyDeviceNameLength(byte[] name) {
+        return 1 + name.length;
+    }
+
+    private static void writeLegacyDeviceInfo(XOutputStream outputStream, int type, int id, int use) {
+        // xDeviceInfo: CARD32 type, CARD8 id, CARD8 num_classes, CARD8 use, CARD8 attached.
+        outputStream.writeInt(type);
+        outputStream.writeByte((byte) id);
+        outputStream.writeByte((byte) 0);
+        outputStream.writeByte((byte) use);
+        outputStream.writeByte((byte) 0);
+    }
+
+    private static void writeLegacyDeviceName(XOutputStream outputStream, byte[] name) {
+        outputStream.writeByte((byte) name.length);
+        outputStream.write(name);
+    }
+
+    private static void listInputDevices(XClient client, XInputStream inputStream, XOutputStream outputStream) throws IOException {
+        inputStream.skip(client.getRemainingRequestLength());
+
+        final int deviceInfoBytes = 2 * 8;
+        final int payloadBytes = deviceInfoBytes
+                + legacyDeviceNameLength(LEGACY_POINTER_NAME)
+                + legacyDeviceNameLength(LEGACY_KEYBOARD_NAME);
+        final int payloadPad = (-payloadBytes) & 3;
+
+        try (XStreamLock lock = outputStream.lock()) {
+            // typedef struct {
+            //    CARD8  repType;        /* X_Reply */
+            //    CARD8  RepType;        /* always X_ListInputDevices */
+            //    CARD16 sequenceNumber;
+            //    CARD32 length;
+            //    CARD8  ndevices;
+            //    CARD8  pad1, pad2, pad3;
+            //    CARD32 pad01, pad02, pad03, pad04, pad05;
+            // } xListInputDevicesReply;
+            outputStream.writeByte(RESPONSE_CODE_SUCCESS);
+            outputStream.writeByte(ClientOpcodes.LIST_INPUT_DEVICES);
+            outputStream.writeShort(client.getSequenceNumber());
+            outputStream.writeInt((payloadBytes + payloadPad) / 4);
+            outputStream.writeByte((byte) 2);
+            outputStream.writePad(23);
+
+            writeLegacyDeviceInfo(outputStream, LEGACY_MOUSE_TYPE, MASTER_POINTER_ID, LegacyDeviceUse.X_POINTER);
+            writeLegacyDeviceInfo(outputStream, LEGACY_KEYBOARD_TYPE, MASTER_KEYBOARD_ID, LegacyDeviceUse.X_KEYBOARD);
+
+            writeLegacyDeviceName(outputStream, LEGACY_POINTER_NAME);
+            writeLegacyDeviceName(outputStream, LEGACY_KEYBOARD_NAME);
+            outputStream.writePad(payloadPad);
         }
     }
 
@@ -411,6 +476,9 @@ public class XInput2Extension implements Extension {
         switch (opcode) {
             case ClientOpcodes.GET_EXTENSION_VERSION:
                 getExtensionVersion(client, inputStream, outputStream);
+                break;
+            case ClientOpcodes.LIST_INPUT_DEVICES:
+                listInputDevices(client, inputStream, outputStream);
                 break;
             case ClientOpcodes.GET_CLIENT_POINTER:
                 getClientPointer(client, inputStream, outputStream);
