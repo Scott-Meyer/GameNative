@@ -44,7 +44,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
 
 public abstract class ImageFsInstaller {
-    public static final byte LATEST_VERSION = 28;
+    public static final byte LATEST_VERSION = 29;
 
     private static void resetContainerImgVersions(Context context) {
         ContainerManager manager = new ContainerManager(context);
@@ -148,12 +148,21 @@ public abstract class ImageFsInstaller {
                 });
             }
 
+            ContainerManager containerManager = null;
             if (success) {
                 Log.d("ImageFsInstaller", "Successfully installed system files");
-                ContainerManager containerManager = new ContainerManager(context);
+                containerManager = new ContainerManager(context);
 
                 installWineFromDownloads(context);
                 installGuestLibs(context);
+                GlibcRuntimePathPatcher.patch(context, imageFs, containerVariant);
+                if (!imageFs.hasRequiredRuntimeFiles(containerVariant)) {
+                    Log.e("ImageFsInstaller", "Installed imagefs is missing required runtime files for " + containerVariant);
+                    success = false;
+                }
+            }
+
+            if (success) {
                 imageFs.createImgVersionFile(LATEST_VERSION);
                 resetContainerImgVersions(context);
 
@@ -210,17 +219,18 @@ public abstract class ImageFsInstaller {
 
     public static Future<Boolean> installIfNeededFuture(final Context context, AssetManager assetManager, Container container, Callback<Integer> onProgress) {
         ImageFs imageFs = ImageFs.find(context);
+        String containerVariant = container.getContainerVariant();
         String wineVersion = container.getWineVersion();
         if (!ImageFSLegacyMigrator.migrateLegacyDirsIfNeeded(context, imageFs.getRootDir())) {
             Log.w("ImageFsInstaller", "Failed to migrate legacy directories before installation.");
             return Executors.newSingleThreadExecutor().submit(() -> false);
         }
-        if (!imageFs.isValid() || imageFs.getVersion() < LATEST_VERSION || !imageFs.getVariant().equals(container.getContainerVariant())) {
+        if (!imageFs.isValid() || imageFs.getVersion() < LATEST_VERSION || !imageFs.getVariant().equals(containerVariant)) {
             Log.d("ImageFsInstaller", "Installing image from assets");
             return installFromAssetsFuture(
                     context,
                     assetManager,
-                    container.getContainerVariant(),
+                    containerVariant,
                     wineVersion,
                     onProgress
             );
@@ -229,6 +239,11 @@ public abstract class ImageFsInstaller {
             return Executors.newSingleThreadExecutor().submit(() -> {
                 ensureSharedHomeRoot(context, imageFs.getRootDir());
                 ensureProtonVersionSymlink(context, imageFs.getRootDir(), wineVersion);
+                GlibcRuntimePathPatcher.patch(context, imageFs, containerVariant);
+                if (!imageFs.hasRequiredRuntimeFiles(containerVariant)) {
+                    Log.e("ImageFsInstaller", "Existing imagefs is missing required runtime files for " + containerVariant);
+                    return false;
+                }
                 return true;
             });
         }
