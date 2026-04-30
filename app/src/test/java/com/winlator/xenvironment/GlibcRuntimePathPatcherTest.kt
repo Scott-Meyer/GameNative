@@ -48,6 +48,31 @@ class GlibcRuntimePathPatcherTest {
     }
 
     @Test
+    fun patchBytesForPackage_rewritesVortekRunpath() {
+        val oldPath = "/data/data/app.gamenative/files/imagefs/usr/lib"
+        val newPath = "/data/data/app.gamenative.debug/imgfs/usr/lib"
+        val bytes = "$oldPath\u0000".toByteArray(Charsets.US_ASCII)
+
+        assertEquals(1, GlibcRuntimePathPatcher.patchBytesForPackage(bytes, "app.gamenative.debug"))
+
+        val patchedText = bytes.toString(Charsets.US_ASCII)
+        assertFalse(patchedText.contains(oldPath))
+        assertTrue(patchedText.contains(newPath))
+    }
+
+    @Test
+    fun patchTextForPackage_rewritesVortekIcdJsonPath() {
+        val oldPath = "/data/data/app.gamenative/files/imagefs/usr/lib/libvulkan_vortek.so"
+        val newPath = "/data/data/app.gamenative.debug/imgfs/usr/lib/libvulkan_vortek.so"
+        val json = """{"ICD":{"library_path":"$oldPath"}}"""
+
+        val patched = GlibcRuntimePathPatcher.patchTextForPackage(json, "app.gamenative.debug")
+
+        assertFalse(patched.contains(oldPath))
+        assertTrue(patched.contains(newPath))
+    }
+
+    @Test
     fun patchBytesForPackage_skipsReplacementWhenCapacityIsTooSmall() {
         val oldPath = "/data/data/com.winlator/files/imagefs/usr/tmp/.X11-unix/X"
         val bytes = "$oldPath\u0000".toByteArray(Charsets.US_ASCII)

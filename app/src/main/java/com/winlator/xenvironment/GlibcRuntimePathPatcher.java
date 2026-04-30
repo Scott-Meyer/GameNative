@@ -26,6 +26,14 @@ public final class GlibcRuntimePathPatcher {
         "usr/lib/libxcb.so.1",
         "usr/lib/libxcb.so.1.1.0",
         "usr/lib/libredirect.so",
+        "usr/lib/libvulkan_vortek.so",
+        "usr/lib/libvulkan_freedreno.so",
+    };
+
+    private static final String[] PATCHED_TEXT_FILES = {
+        "usr/share/vulkan/icd.d/vortek_icd.aarch64.json",
+        "usr/share/vulkan/icd.d/freedreno_icd.aarch64.json",
+        "usr/share/vulkan/icd.d/wrapper_icd.aarch64.json",
     };
 
     private GlibcRuntimePathPatcher() {
@@ -41,6 +49,9 @@ public final class GlibcRuntimePathPatcher {
         int patched = 0;
         for (String relativePath : PATCHED_RUNTIME_FILES) {
             patched += patchFileForPackage(new File(imageFs.getRootDir(), relativePath), context.getPackageName());
+        }
+        for (String relativePath : PATCHED_TEXT_FILES) {
+            patched += patchTextFileForPackage(new File(imageFs.getRootDir(), relativePath), context.getPackageName());
         }
 
         if (patched > 0) {
@@ -90,7 +101,56 @@ public final class GlibcRuntimePathPatcher {
         return patched;
     }
 
+    private static int patchTextFileForPackage(File file, String packageName) {
+        if (!file.isFile() || Files.isSymbolicLink(file.toPath())) {
+            return 0;
+        }
+
+        String text;
+        try {
+            text = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            Log.w(TAG, "Unable to read " + file.getPath(), e);
+            return 0;
+        }
+
+        String patchedText = patchTextForPackage(text, packageName);
+        if (patchedText.equals(text)) {
+            return 0;
+        }
+
+        try {
+            Files.write(file.toPath(), patchedText.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            Log.e(TAG, "Unable to write patched runtime file " + file.getPath(), e);
+            return 0;
+        }
+        return 1;
+    }
+
     static int patchBytesForPackage(byte[] data, String packageName) {
+        List<Replacement> replacements = getReplacements(packageName);
+        replacements.sort(Comparator.comparingInt((Replacement replacement) -> replacement.oldValue.length()).reversed());
+
+        int patched = 0;
+        for (Replacement replacement : replacements) {
+            patched += replaceNullTerminatedAscii(data, replacement.oldValue, replacement.newValue);
+        }
+        return patched;
+    }
+
+    static String patchTextForPackage(String text, String packageName) {
+        String patched = text;
+        List<Replacement> replacements = getReplacements(packageName);
+        replacements.sort(Comparator.comparingInt((Replacement replacement) -> replacement.oldValue.length()).reversed());
+
+        for (Replacement replacement : replacements) {
+            patched = patched.replace(replacement.oldValue, replacement.newValue);
+        }
+        return patched;
+    }
+
+    private static List<Replacement> getReplacements(String packageName) {
         String aliasPath = "/data/data/" + packageName + "/" + IMAGEFS_ALIAS;
         String aliasRelativePath = packageName + "/" + IMAGEFS_ALIAS;
 
@@ -140,17 +200,14 @@ public final class GlibcRuntimePathPatcher {
             aliasPath + "/usr/tmp"
         ));
         replacements.add(new Replacement(
+            "/data/data/app.gamenative/files/imagefs/usr/lib",
+            aliasPath + "/usr/lib"
+        ));
+        replacements.add(new Replacement(
             "app.gamenative/files/imagefs",
             aliasRelativePath
         ));
-
-        replacements.sort(Comparator.comparingInt((Replacement replacement) -> replacement.oldValue.length()).reversed());
-
-        int patched = 0;
-        for (Replacement replacement : replacements) {
-            patched += replaceNullTerminatedAscii(data, replacement.oldValue, replacement.newValue);
-        }
-        return patched;
+        return replacements;
     }
 
     private static int replaceNullTerminatedAscii(byte[] data, String oldValue, String newValue) {

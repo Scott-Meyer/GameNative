@@ -146,6 +146,7 @@ import com.winlator.winhandler.WinHandler.PreferredInputApi
 import com.winlator.winhandler.OnGetProcessInfoListener
 import com.winlator.winhandler.ProcessInfo
 import com.winlator.xconnector.UnixSocketConfig
+import com.winlator.xenvironment.GlibcRuntimePathPatcher
 import com.winlator.xenvironment.ImageFs
 import com.winlator.xenvironment.XEnvironment
 import com.winlator.xenvironment.components.ALSAServerComponent
@@ -4642,6 +4643,7 @@ private fun extractGraphicsDriverFiles(
 
         if (graphicsDriver == "turnip") {
             envVars.put("GALLIUM_DRIVER", "zink")
+            envVars.put("VK_ICD_FILENAMES", imageFs.getShareDir().path + "/vulkan/icd.d/freedreno_icd.aarch64.json")
             envVars.put("TU_OVERRIDE_HEAP_SIZE", "4096")
             if (!envVars.has("MESA_VK_WSI_PRESENT_MODE")) envVars.put("MESA_VK_WSI_PRESENT_MODE", "mailbox")
             envVars.put("vblank_mode", "0")
@@ -4687,6 +4689,7 @@ private fun extractGraphicsDriverFiles(
             envVars.put("MESA_GL_VERSION_OVERRIDE", "3.3")
             envVars.put("WINEVKUSEPLACEDADDR", "1")
             envVars.put("VORTEK_SERVER_PATH", imageFs.getRootDir().getPath() + UnixSocketConfig.VORTEK_SERVER_PATH)
+            envVars.put("VK_ICD_FILENAMES", imageFs.getShareDir().path + "/vulkan/icd.d/vortek_icd.aarch64.json")
             Timber.i("dxwrapper is " + dxwrapper)
             if (dxwrapper.contains("dxvk")) {
                 envVars.put("WINE_D3D_CONFIG", "renderer=gdi")
@@ -4729,6 +4732,7 @@ private fun extractGraphicsDriverFiles(
             envVars.put("MESA_GL_VERSION_OVERRIDE", "3.3")
             envVars.put("WINEVKUSEPLACEDADDR", "1")
             envVars.put("VORTEK_SERVER_PATH", imageFs.getRootDir().getPath() + UnixSocketConfig.VORTEK_SERVER_PATH)
+            envVars.put("VK_ICD_FILENAMES", imageFs.getShareDir().path + "/vulkan/icd.d/vortek_icd.aarch64.json")
             Timber.i("dxwrapper is " + dxwrapper)
             if (dxwrapper.contains("dxvk")) {
                 envVars.put("WINE_D3D_CONFIG", "renderer=gdi")
@@ -4738,6 +4742,8 @@ private fun extractGraphicsDriverFiles(
                 TarCompressorUtils.extract(TarCompressorUtils.Type.ZSTD, context.assets, "graphics_driver/zink-22.2.5.tzst", rootDir)
             }
         }
+
+        GlibcRuntimePathPatcher.patch(context, imageFs, container.containerVariant)
     } else {
         var adrenoToolsDriverId: String? = ""
         val selectedDriverVersion: String?
